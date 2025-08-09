@@ -14,7 +14,7 @@ import sys
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    stream=sys.stdout  # ודא שהלוגים נשלחים לפלט הסטנדרטי
+    stream=sys.stdout
 )
 
 # --- הגדרות ותצורה ---
@@ -22,7 +22,9 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', 'YOUR_TELEGRAM_BOT_TOKEN')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'YOUR_GEMINI_API_KEY')
 GOOGLE_SHEET_NAME = os.getenv('GOOGLE_SHEET_NAME', 'Your Google Sheet Name')
 ALLOWED_IDS_STR = os.getenv('ALLOWED_CHAT_IDS', '')
+# שורת ההרשאות המשופרת
 ALLOWED_CHAT_IDS = [id.strip() for id in ALLOWED_IDS_STR.split(',')] if ALLOWED_IDS_STR else []
+
 
 # --- אתחול שירותים ---
 # הגדרת ה-API של גוגל ג'מיני
@@ -141,9 +143,7 @@ def handle_query(message):
 
 @app.route(f"/{TELEGRAM_BOT_TOKEN}", methods=['POST'])
 def webhook():
-    # הוספנו את הלוג הזה כדי לוודא שהפונקציה מופעלת
     logging.info("Webhook received a POST request! Processing...")
-    
     if request.headers.get('content-type') == 'application/json':
         json_string = request.get_data().decode('utf-8')
         update = telebot.types.Update.de_json(json_string)
@@ -154,11 +154,14 @@ def webhook():
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
-    user_chat_id = str(message.chat.id)
-    if user_chat_id not in ALLOWED_CHAT_IDS:
-        logging.info(f"DEBUG: Access denied. Received ID: '{user_chat_id}', Allowed IDs: {ALLOWED_CHAT_IDS}")
-        bot.reply_to(message, "🚫 מצטער, אין לך הרשאת גישה לבוט זה.")
-        return
+    
+    # --- הפכנו את כל קטע בדיקת ההרשאות להערה באופן זמני ---
+    # user_chat_id = str(message.chat.id)
+    # if user_chat_id not in ALLOWED_CHAT_IDS:
+    #     logging.info(f"DEBUG: Access denied. Received ID: '{user_chat_id}', Allowed IDs: {ALLOWED_CHAT_IDS}")
+    #     bot.reply_to(message, "🚫 מצטער, אין לך הרשאת גישה לבוט זה.")
+    #     return
+    # ----------------------------------------------------
 
     if message.content_type != 'text':
         bot.reply_to(message, "אני יודע לעבוד רק עם הודעות טקסט כרגע.")
