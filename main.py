@@ -22,7 +22,7 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', 'YOUR_TELEGRAM_BOT_TOKEN')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'YOUR_GEMINI_API_KEY')
 GOOGLE_SHEET_NAME = os.getenv('GOOGLE_SHEET_NAME', 'Your Google Sheet Name')
 ALLOWED_IDS_STR = os.getenv('ALLOWED_CHAT_IDS', '')
-ALLOWED_CHAT_IDS = ALLOWED_IDS_STR.split(',') if ALLOWED_IDS_STR else []
+ALLOWED_CHAT_IDS = [id.strip() for id in ALLOWED_IDS_STR.split(',')] if ALLOWED_IDS_STR else []
 
 # --- אתחול שירותים ---
 # הגדרת ה-API של גוגל ג'מיני
