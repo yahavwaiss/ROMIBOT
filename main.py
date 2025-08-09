@@ -22,6 +22,7 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', 'YOUR_TELEGRAM_BOT_TOKEN')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'YOUR_GEMINI_API_KEY')
 GOOGLE_SHEET_NAME = os.getenv('GOOGLE_SHEET_NAME', 'Your Google Sheet Name')
 ALLOWED_IDS_STR = os.getenv('ALLOWED_CHAT_IDS', '')
+# שורת הרשאות משופרת המנקה רווחים
 ALLOWED_CHAT_IDS = [id.strip() for id in ALLOWED_IDS_STR.split(',')] if ALLOWED_IDS_STR else []
 
 
@@ -52,10 +53,11 @@ app = Flask(__name__)
 # --- פונקציות ליבה ---
 
 def classify_intent(text):
-    # ... (הקוד של הפונקציה נשאר זהה)
     prompt = f"""
     Is the user's intent in the following sentence to LOG new information or to QUERY existing data?
-    Answer with a single word only: `LOG` for logging, or `QUERY` for a question. User text: "{text}"
+    Answer with a single word only: `LOG` for logging, or `QUERY` for a question.
+
+    User text: "{text}"
     """
     try:
         response = model.generate_content(prompt)
@@ -65,9 +67,13 @@ def classify_intent(text):
         return "LOG"
 
 def analyze_log_text(text):
-    # ... (הקוד של הפונקציה נשאר זהה)
     prompt = f"""
-    You are an assistant for a parenting log... Text: "{text}"
+    You are an assistant for a parenting log. Analyze the following text and extract the information into a JSON format with keys: "category" and "details".
+    Possible categories are: 'אוכל', 'שינה', 'התנהגות', 'אחר'.
+    For 'details', briefly summarize the action.
+    Example 1: Text: "הלכה לישון עכשיו צהריים", JSON: {{"category": "שינה", "details": "הלכה לישון שנת צהריים"}}
+    Example 2: Text: "היא סיימה צלחת שלמה של פסטה", JSON: {{"category": "אוכל", "details": "אכלה צלחת פסטה שלמה"}}
+    Now, analyze the following text and return only the JSON object: Text: "{text}"
     """
     try:
         response = model.generate_content(prompt)
@@ -78,12 +84,12 @@ def analyze_log_text(text):
         return {"category": "שגיאת ניתוח", "details": text}
 
 def write_to_sheet(raw_text, ai_data):
-    # ... (הקוד של הפונקציה נשאר זהה)
     try:
         now = datetime.now()
         row = [
             now.strftime('%Y-%m-%d %H:%M:%S'), now.strftime('%Y-%m-%d'), now.strftime('%H:%M'),
-            raw_text, ai_data.get('category', 'לא זוהה'), ai_data.get('details', 'לא זוהה'), 'Telegram Bot'
+            raw_text, ai_data.get('category', 'לא זוהה'), ai_data.get('details', 'לא זוהה'),
+            'Telegram Bot'
         ]
         sheet.append_row(row)
         return True
@@ -92,41 +98,54 @@ def write_to_sheet(raw_text, ai_data):
         return False
 
 def answer_question_with_context(question):
-    # ... (הקוד של הפונקציה נשאר זהה)
     try:
         all_data = sheet.get_all_records()
-        if not all_data: return "מצטער, הגיליון עדיין ריק..."
-        # ... וכו'
+        if not all_data:
+            return "מצטער, הגיליון עדיין ריק ואין לי נתונים לענות מהם."
+        df = pd.DataFrame(all_data)
+        if df.empty:
+             return "מצטער, הגיליון עדיין ריק ואין לי נתונים לענות מהם."
+        data_context = df.to_csv(index=False)
+        prompt = f"""
+        You are a helpful assistant analyzing a child's log. Your task is to answer the user's question based ONLY on the data provided in the 'CONTEXT' section.
+        If you can provide additional general knowledge that is relevant but NOT in the data, add a separate section at the end of your answer under the clear heading: '**הרחבה (מבוסס על ידע כללי):**'.
+        If no expansion is needed, do not add this section.
+        CONTEXT (Data from the tracking sheet): --- {data_context} ---
+        USER'S QUESTION: {question}
+        Answer based on the instructions.
+        """
+        response = model.generate_content(prompt)
+        return response.text
     except Exception as e:
         logging.error(f"Error answering question: {e}")
-        return "אוי, הייתה לי בעיה בניתוח הנתונים..."
+        return "אוי, הייתה לי בעיה בניתוח הנתונים כדי לענות על השאלה."
 
 # --- פונקציות המטפלות בפעולות הבוט ---
 
 def handle_log(message):
-    logging.info("--- Entered handle_log function ---") # -- לוג חדש
+    logging.info("--- Entered handle_log function ---")
     user_text = message.text
     bot.reply_to(message, "קיבלתי, מתעד את המידע...")
     
-    logging.info("Analyzing text with AI...") # -- לוג חדש
+    logging.info("Analyzing text with AI...")
     ai_result = analyze_log_text(user_text)
-    logging.info(f"AI analysis result: {ai_result}") # -- לוג חדש
+    logging.info(f"AI analysis result: {ai_result}")
     
-    logging.info("Writing to Google Sheet...") # -- לוג חדש
+    logging.info("Writing to Google Sheet...")
     success = write_to_sheet(user_text, ai_result)
     
     if success:
-        logging.info("Successfully wrote to sheet.") # -- לוג חדש
+        logging.info("Successfully wrote to sheet.")
         category = ai_result.get('category', 'לא ידוע')
         details = ai_result.get('details', '')
         confirmation_message = f"✅ תועד בהצלחה!\n*קטגוריה:* {category}\n*פירוט:* {details}"
         bot.send_message(message.chat.id, confirmation_message, parse_mode='Markdown')
     else:
-        logging.error("Failed to write to sheet.") # -- לוג חדש
+        logging.error("Failed to write to sheet.")
         bot.send_message(message.chat.id, "❌ אוי. הייתה בעיה בשמירת הנתונים לגיליון.")
 
 def handle_query(message):
-    logging.info("--- Entered handle_query function ---") # -- לוג חדש
+    logging.info("--- Entered handle_query function ---")
     user_text = message.text
     bot.reply_to(message, "זיהיתי שאלה, מחפש תשובה בנתונים... 🧐")
     answer = answer_question_with_context(user_text)
@@ -147,27 +166,34 @@ def webhook():
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
-    logging.info("--- Entered handle_message function ---") # -- לוג חדש
+    logging.info("--- Entered handle_message function ---")
     
-    # --- בדיקת ההרשאות עדיין מנוטרלת לצורך הבדיקה ---
-    # user_chat_id = str(message.chat.id)
-    # if user_chat_id not in ALLOWED_CHAT_IDS:
-    #     logging.info(f"DEBUG: Access denied. Received ID: '{user_chat_id}', Allowed IDs: {ALLOWED_CHAT_IDS}")
-    #     bot.reply_to(message, "🚫 מצטער, אין לך הרשאת גישה לבוט זה.")
-    #     return
-    # ----------------------------------------------------
+    # --- בדיקת ההרשאות מופעלת מחדש ---
+    user_chat_id = str(message.chat.id)
+    if user_chat_id not in ALLOWED_CHAT_IDS:
+        logging.info(f"DEBUG: Access denied. Received ID: '{user_chat_id}', Allowed IDs: {ALLOWED_CHAT_IDS}")
+        bot.reply_to(message, "🚫 מצטער, אין לך הרשאת גישה לבוט זה.")
+        return
+    # ------------------------------------
 
     if message.content_type != 'text':
         bot.reply_to(message, "אני יודע לעבוד רק עם הודעות טקסט כרגע.")
         return
 
     if message.text.lower() == '/start':
-        # ... (הקוד של הודעת הפתיחה נשאר זהה)
+        welcome_message = """
+        שלום! אני בוט המעקב החכם שלך. 🤓
+        פשוט דבר איתי!
+        ✍️ *כדי לתעד מידע חדש*, פשוט כתוב לי מה קרה.
+        ❓ *כדי לשאול שאלות על המידע*, פשוט שאל אותן.
+        אני אבין לבד מה לעשות.
+        """
+        bot.send_message(message.chat.id, welcome_message, parse_mode='Markdown')
         return
 
-    logging.info("Classifying intent...") # -- לוג חדש
+    logging.info("Classifying intent...")
     intent = classify_intent(message.text)
-    logging.info(f"Intent classified as: {intent}") # -- לוג חדש
+    logging.info(f"Intent classified as: {intent}")
 
     if 'QUERY' in intent:
         handle_query(message)
