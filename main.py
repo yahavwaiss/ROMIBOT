@@ -27,7 +27,6 @@ except Exception as e:
 try:
     scope = ["https://spreadsheets.google.com/feeds", 'https://www.googleapis.com/auth/spreadsheets',
              "https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/drive"]
-    # --- זהו השינוי העיקרי ---
     creds = ServiceAccountCredentials.from_json_keyfile_name("romi-468413-52721fa379b8.json", scope)
     client = gspread.authorize(creds)
     sheet = client.open(GOOGLE_SHEET_NAME).sheet1
@@ -189,6 +188,9 @@ def handle_message(message):
     """
     user_chat_id = str(message.chat.id)
     if user_chat_id not in ALLOWED_CHAT_IDS:
+        # --- זו שורת האבחון שהוספנו ---
+        print(f"DEBUG: Access denied. Received ID: '{user_chat_id}', Allowed IDs: {ALLOWED_CHAT_IDS}")
+        # ------------------------------------
         print(f"Unauthorized access attempt by Chat ID: {user_chat_id}")
         bot.reply_to(message, "🚫 מצטער, אין לך הרשאת גישה לבוט זה.")
         return
