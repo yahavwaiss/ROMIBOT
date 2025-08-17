@@ -248,6 +248,7 @@ class GoogleSheetsManager:
                     try:
                         val = float(str(duration_field))
                         record['duration_min'] = int(val)
+                        logger.debug(f"Duration value: {val} -> {int(val)} minutes")
                     except (ValueError, TypeError):
                         logger.warning(f"Could not parse duration value: {duration_field}")
                         record['duration_min'] = 0
@@ -260,11 +261,34 @@ class GoogleSheetsManager:
         return fixed_records
 
     def parse_timestamp(self, timestamp_str: str) -> Optional[datetime]:
-        """מפענח timestamp בפורמטים שונים"""
+        """🔧 מפענח timestamp בפורמטים שונים עם תיקון פורמט זמן מיוחד"""
         if not timestamp_str:
             return None
             
         timestamp_str = str(timestamp_str).strip()
+        logger.debug(f"Original timestamp: '{timestamp_str}'")
+        
+        # 🚀 תיקון מיוחד לפורמטים כמו "2025-08-17 10:4" ו "2025-08-17 12:0"
+        if len(timestamp_str) >= 10:  # לפחות התאריך
+            parts = timestamp_str.split()
+            if len(parts) == 2:
+                date_part = parts[0]
+                time_part = parts[1]
+                
+                # תיקון השעה והדקות - הוספת 0 מובילים אם חסרים
+                if ':' in time_part:
+                    time_parts = time_part.split(':')
+                    if len(time_parts) == 2:
+                        try:
+                            hour = int(time_parts[0])
+                            minute = int(time_parts[1])
+                            # וידוא שהשעות והדקות תקינות
+                            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                                formatted_time = f"{hour:02d}:{minute:02d}"
+                                timestamp_str = f"{date_part} {formatted_time}"
+                                logger.debug(f"Fixed timestamp format: '{timestamp_str}'")
+                        except ValueError:
+                            logger.warning(f"Invalid time components in: {time_part}")
         
         # פורמטים שונים לנסות
         formats = [
@@ -282,11 +306,12 @@ class GoogleSheetsManager:
                 parsed_date = datetime.strptime(timestamp_str, fmt)
                 if parsed_date.tzinfo is None:
                     parsed_date = TIMEZONE.localize(parsed_date)
+                logger.debug(f"Successfully parsed '{timestamp_str}' as {parsed_date}")
                 return parsed_date
             except ValueError:
                 continue
         
-        logger.warning(f"Could not parse timestamp: {timestamp_str}")
+        logger.warning(f"Could not parse timestamp: '{timestamp_str}'")
         return None
 
     def get_data_by_timerange(self, worksheet_name: str, days_back: int = 7) -> List[Dict]:
@@ -299,26 +324,34 @@ class GoogleSheetsManager:
                 logger.info(f"No records found in worksheet: {worksheet_name}")
                 return []
             
+            logger.info(f"Found {len(all_records)} total records in {worksheet_name}")
+            
             # תיקון מיוחד לנתוני שינה
             if worksheet_name == 'Sleep':
                 all_records = self.fix_sleep_duration_minutes(all_records)
+                logger.info(f"Fixed sleep duration for {len(all_records)} sleep records")
             
             cutoff_date = datetime.now(TIMEZONE) - timedelta(days=days_back)
+            logger.info(f"Filtering records from {cutoff_date.strftime('%Y-%m-%d %H:%M')} onwards")
             
             filtered_data = []
-            for record in all_records:
+            for i, record in enumerate(all_records):
                 try:
                     timestamp_str = str(record.get('timestamp', ''))
                     if not timestamp_str or timestamp_str.lower() in ['', 'none', 'null']:
+                        logger.debug(f"Record {i+1}: Empty timestamp, skipping")
                         continue
                         
                     record_date = self.parse_timestamp(timestamp_str)
                     
                     if record_date and record_date >= cutoff_date:
                         filtered_data.append(record)
-                        logger.debug(f"Added record from {record_date}: {record}")
+                        logger.debug(f"Record {i+1}: Added - {record_date} - {record}")
+                    else:
+                        logger.debug(f"Record {i+1}: Filtered out - {record_date} (before {cutoff_date})")
+                        
                 except Exception as e:
-                    logger.debug(f"Could not process record {record}: {e}")
+                    logger.debug(f"Record {i+1}: Could not process - {e}")
                     continue
             
             logger.info(f"Found {len(filtered_data)} records in {worksheet_name} for last {days_back} days")
@@ -333,6 +366,7 @@ class GoogleSheetsManager:
         try:
             today_data = {}
             today_str = datetime.now(TIMEZONE).strftime('%Y-%m-%d')
+            logger.info(f"Generating daily summary for {today_str}")
             
             # נתוני אוכל עם פירוט
             food_data = self.get_data_by_timerange('Food', 1)
@@ -366,17 +400,22 @@ class GoogleSheetsManager:
                 'solids_count': len([item for item in food_data if item.get('category') == 'solid'])
             }
             
-            # נתוני שינה עם פירוט
+            # נתוני שינה עם פירוט - תיקון מיוחד
             sleep_data = self.get_data_by_timerange('Sleep', 1)
             sleep_details = []
             total_sleep_minutes = 0
             
-            for sleep in sleep_data:
+            logger.info(f"Processing {len(sleep_data)} sleep records for daily summary")
+            
+            for i, sleep in enumerate(sleep_data):
                 try:
                     duration = sleep.get('duration_min', 0)
+                    logger.debug(f"Sleep record {i+1}: duration_min = {duration} (type: {type(duration)})")
+                    
                     if duration:
                         duration_int = int(float(duration))
                         total_sleep_minutes += duration_int
+                        logger.debug(f"Added {duration_int} minutes to total (now {total_sleep_minutes})")
                         
                         start_time = sleep.get('start', '')
                         end_time = sleep.get('end', '')
@@ -387,9 +426,13 @@ class GoogleSheetsManager:
                             detail = f"{duration_int} דקות שינה"
                         
                         sleep_details.append(detail)
+                        logger.debug(f"Added sleep detail: {detail}")
+                        
                 except Exception as e:
-                    logger.warning(f"Could not process sleep record: {e}")
+                    logger.warning(f"Could not process sleep record {i+1}: {e}")
                     continue
+            
+            logger.info(f"Total sleep: {total_sleep_minutes} minutes = {round(total_sleep_minutes / 60, 1)} hours")
             
             today_data['sleep'] = {
                 'total_sessions': len(sleep_data),
@@ -427,7 +470,7 @@ class GoogleSheetsManager:
                 'details': behavior_details
             }
             
-            logger.info(f"Daily summary: {len(food_data)} meals, {total_sleep_minutes} min sleep, {len(behavior_data)} behaviors")
+            logger.info(f"Daily summary complete: {len(food_data)} meals, {total_sleep_minutes} min sleep, {len(behavior_data)} behaviors")
             return today_data
             
         except Exception as e:
@@ -729,7 +772,7 @@ class RomiBot:
             'status': 'healthy',
             'bot': 'RomiBot',
             'timestamp': datetime.now(TIMEZONE).isoformat(),
-            'version': '2.2.1'
+            'version': '2.3.0'
         })
 
     async def home_page(self, request):
@@ -779,13 +822,13 @@ class RomiBot:
         <p>תיעוד חכם לתינוקות באמצעות AI</p>
         <div class="status">✅ השרת פעיל</div>
         <div class="features">
-            <p>🆕 <strong>תיקון סופי:</strong> שגיאות syntax תוקנו!</p>
+            <p>🆕 <strong>תיקון נתוני שינה:</strong> זיהוי מושלם של פורמט זמן!</p>
             <p>🔧 חישובי שעות שינה מדויקים 100%</p>
             <p>📋 סיכומים עם פירוט מלא - מה ומתי</p>
             <p>🤖 תשובות AI חכמות לשאלות</p>
             <p>🔍 ניתוח דפוסים והתפתחות</p>
         </div>
-        <p style="font-size: 1rem; margin-top: 1rem;">גרסה 2.2.1 - STABLE</p>
+        <p style="font-size: 1rem; margin-top: 1rem;">גרסה 2.3.0 - SLEEP FIX</p>
     </div>
 </body>
 </html>
@@ -1111,7 +1154,7 @@ class RomiBot:
 
 😴 **שינה:** {sleep_data.get('total_hours', 0)} שעות ({sleep_data.get('total_sessions', 0)} תנומות)"""
             
-            # הוספת פירוט שינה
+                      # הוספת פירוט שינה
             sleep_details = sleep_data.get('details', [])
             if sleep_details:
                 summary_text += f"\n📋 {', '.join(sleep_details)}"
@@ -1136,7 +1179,7 @@ class RomiBot:
                 if len(behavior_details) > 2:
                     summary_text += f" +{len(behavior_details)-2} נוספים"
             
-            # 🔧 תיקון סופי - הפרדת התנאי לשורות נפרדות
+            # תיקון סופי - הפרדת התנאי לשורות נפרדות
             summary_text += "\n\n"
             if behavior_data.get('positive_events', 0) > behavior_data.get('cry_events', 0):
                 summary_text += "🌟 יום נהדר!"
@@ -1505,7 +1548,7 @@ class RomiBot:
 
     def run(self):
         """הפעלת השרת"""
-        logger.info("🤖 מפעיל את בוט תיעוד רומי (גרסת Webhook) - גרסה 2.2.1 STABLE")
+        logger.info("🤖 מפעיל את בוט תיעוד רומי (גרסת Webhook) - גרסה 2.3.0 SLEEP FIX")
 
         # הוספת lifecycle hooks
         self.web_app.on_startup.append(self.on_startup)
