@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import time
+import hashlib
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from collections import defaultdict
@@ -49,11 +50,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# מאגר זמני לטקסטים של הבהרה
+CLARIFICATION_TEXTS = {}
+
 @dataclass
 class ParsedMessage:
     """מבנה נתונים לביאור הודעות AI"""
-    category: str
-    confidence: float
+    category: str = "other"
+    confidence: float = 0.5
     item: Optional[str] = None
     qty_value: Optional[float] = None
     qty_unit: Optional[str] = None
@@ -376,14 +380,21 @@ confidence גבוה (0.8+) רק אם אתה בטוח.
 
                 data = json.loads(result_text)
 
-                # וולידציה בסיסית
-                if data.get('category') not in ['food', 'sleep', 'cry', 'behavior', 'question', 'other']:
-                    data['category'] = 'other'
-
-                if not isinstance(data.get('confidence'), (int, float)) or not 0 <= data['confidence'] <= 1:
-                    data['confidence'] = 0.5
-
-                return ParsedMessage(**{k: v for k, v in data.items() if hasattr(ParsedMessage, k)})
+                # וולידציה ויצירת ParsedMessage
+                return ParsedMessage(
+                    category=data.get('category', 'other') if data.get('category') in ['food', 'sleep', 'cry', 'behavior', 'question', 'other'] else 'other',
+                    confidence=float(data.get('confidence', 0.5)) if isinstance(data.get('confidence'), (int, float)) and 0 <= data.get('confidence', 0.5) <= 1 else 0.5,
+                    item=data.get('item'),
+                    qty_value=float(data.get('qty_value')) if data.get('qty_value') and isinstance(data.get('qty_value'), (int, float)) else None,
+                    qty_unit=data.get('qty_unit'),
+                    method=data.get('method'),
+                    start_time=data.get('start_time'),
+                    end_time=data.get('end_time'),
+                    duration_min=int(data.get('duration_min')) if data.get('duration_min') and isinstance(data.get('duration_min'), (int, float)) else None,
+                    intensity_1_5=int(data.get('intensity_1_5')) if data.get('intensity_1_5') and isinstance(data.get('intensity_1_5'), (int, float)) and 1 <= data.get('intensity_1_5') <= 5 else None,
+                    description=data.get('description'),
+                    notes=data.get('notes')
+                )
 
             except Exception as e:
                 if attempt == 2:  # ניסיון אחרון
@@ -442,7 +453,7 @@ class RomiBot:
             'status': 'healthy',
             'bot': 'RomiBot',
             'timestamp': datetime.now(TIMEZONE).isoformat(),
-            'version': '1.0.1'
+            'version': '1.0.2'
         })
 
     async def home_page(self, request):
@@ -486,7 +497,7 @@ class RomiBot:
         <h1>🍼 בוט תיעוד רומי</h1>
         <p>תיעוד חכם לתינוקות באמצעות AI</p>
         <div class="status">✅ השרת פעיל</div>
-        <p style="font-size: 1rem; margin-top: 1rem;">גרסה 1.0.1</p>
+        <p style="font-size: 1rem; margin-top: 1rem;">גרסה 1.0.2</p>
     </div>
 </body>
 </html>
@@ -550,6 +561,10 @@ class RomiBot:
             logger.info("👋 Bot shutdown complete")
         except Exception as e:
             logger.error(f"שגיאה בכיבוי הבוט: {e}")
+
+    def _generate_text_id(self, text: str) -> str:
+        """יוצר ID קצר לטקסט"""
+        return hashlib.md5(text.encode()).hexdigest()[:8]
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """פקודת התחלה"""
@@ -681,11 +696,13 @@ class RomiBot:
 
         except Exception as e:
             logger.error(f"שגיאה בעיבוד הודעה: {e}")
-            await update.message.reply_text(f"❌ שגיאה בעיבוד: {str(e)}")
+            await update.message.reply_text("❌ שגיאה בעיבוד ההודעה. נסה שוב או כתוב בצורה אחרת.")
 
             # שליחה למנהלים
             try:
-                await self.notify_admins(f"שגיאה: {str(e)}\nמשתמש: {display_name if 'display_name' in locals() else 'לא ידוע'}\nטקסט: {text}")
+                display_name = display_name if 'display_name' in locals() else 'לא ידוע'
+                text = text if 'text' in locals() else 'לא ידוע'
+                await self.notify_admins(f"שגיאה: {str(e)}\nמשתמש: {display_name}\nטקסט: {text}")
             except:
                 pass
 
@@ -749,25 +766,29 @@ class RomiBot:
     async def ask_for_clarification(self, update: Update, parsed: ParsedMessage, text: str):
         """בקש הבהרה אם הביטחון נמוך"""
         try:
+            # יצירת ID קצר לטקסט
+            text_id = self._generate_text_id(text)
+            CLARIFICATION_TEXTS[text_id] = text
+
             keyboard = [
                 [
-                    InlineKeyboardButton("🍼 אוכל", callback_data=f"clarify:food:{text}"),
-                    InlineKeyboardButton("😴 שינה", callback_data=f"clarify:sleep:{text}")
+                    InlineKeyboardButton("🍼 אוכל", callback_data=f"f:{text_id}"),
+                    InlineKeyboardButton("😴 שינה", callback_data=f"s:{text_id}")
                 ],
                 [
-                    InlineKeyboardButton("😢 בכי", callback_data=f"clarify:cry:{text}"),
-                    InlineKeyboardButton("📝 התנהגות", callback_data=f"clarify:behavior:{text}")
+                    InlineKeyboardButton("😢 בכי", callback_data=f"c:{text_id}"),
+                    InlineKeyboardButton("📝 התנהגות", callback_data=f"b:{text_id}")
                 ],
                 [
-                    InlineKeyboardButton("❓ שאלה", callback_data=f"clarify:question:{text}"),
-                    InlineKeyboardButton("🤷 אחר", callback_data=f"clarify:other:{text}")
+                    InlineKeyboardButton("❓ שאלה", callback_data=f"q:{text_id}"),
+                    InlineKeyboardButton("🤷 אחר", callback_data=f"o:{text_id}")
                 ]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             await update.message.reply_text(
                 f"🤔 **לא בטוח מה התכוונת...**\n\n"
-                f"📝 כתבת: _{text}_\n"
+                f"📝 כתבת: _{text[:50]}{'...' if len(text) > 50 else ''}_\n"
                 f"🎯 AI ניחש: {parsed.category} (ביטחון: {parsed.confidence:.0%})\n\n"
                 f"אוכל להבין טוב יותר אם תבחר קטגוריה:",
                 parse_mode='Markdown',
@@ -775,7 +796,7 @@ class RomiBot:
             )
         except Exception as e:
             logger.error(f"שגיאה בבקשת הבהרה: {e}")
-            await update.message.reply_text("❌ שגיאה בעיבוד ההודעה")
+            await update.message.reply_text("❌ שגיאה בעיבוד ההודעה. נסה שוב.")
 
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """טיפול בלחיצות על כפתורים"""
@@ -783,15 +804,27 @@ class RomiBot:
             query = update.callback_query
             await query.answer()
 
-            if query.data.startswith('clarify:'):
-                parts = query.data.split(':', 2)
-                category = parts[1]
-                original_text = parts[2]
+            if ':' in query.data:
+                # פורמט חדש: קטגוריה:text_id
+                category_code, text_id = query.data.split(':', 1)
+                
+                # מיפוי קודי קטגורית
+                category_map = {
+                    'f': 'food', 's': 'sleep', 'c': 'cry', 
+                    'b': 'behavior', 'q': 'question', 'o': 'other'
+                }
+                
+                category = category_map.get(category_code, 'other')
+                original_text = CLARIFICATION_TEXTS.get(text_id, '')
+                
+                if not original_text:
+                    await query.edit_message_text("❌ הטקסט לא נמצא. נסה שוב.")
+                    return
 
                 # יצירת ParsedMessage מתוקן
                 corrected_parsed = ParsedMessage(
                     category=category,
-                    confidence=1.0,  # המשתמש בחר בעצמו
+                    confidence=1.0,
                     description=original_text,
                     notes=original_text
                 )
@@ -813,10 +846,13 @@ class RomiBot:
                 elif category == 'question':
                     await self.handle_question_from_callback(query, corrected_parsed, original_text, display_name)
 
+                # ניקוי הטקסט מהמאגר
+                CLARIFICATION_TEXTS.pop(text_id, None)
+
         except Exception as e:
             logger.error(f"שגיאה בעיבוד callback: {e}")
             try:
-                await query.edit_message_text(f"❌ שגיאה: {str(e)}")
+                await query.edit_message_text("❌ שגיאה בעיבוד. נסה שוב.")
             except:
                 pass
 
@@ -867,7 +903,7 @@ class RomiBot:
                 try:
                     await self.app.bot.send_message(
                         chat_id=admin_id,
-                        text=f"🚨 **התראת מנהל:**\n{message}",
+                        text=f"🚨 **התראת מנהל:**\n{message[:500]}{'...' if len(message) > 500 else ''}",
                         parse_mode='Markdown'
                     )
                 except Exception as e:
