@@ -1134,13 +1134,13 @@ class RomiBot:
             if behavior_details:
                 summary_text += f"\n📋 {', '.join(behavior_details[:2])}"
                 if len(behavior_details) > 2:
+           
                     summary_text += f" +{len(behavior_details)-2} נוספים"
-            
+summary_text += "\n\n"
 if behavior_data.get('positive_events', 0) > behavior_data.get('cry_events', 0):
-    summary_text += "\n\n🌟 יום נהדר!"
+    summary_text += "🌟 יום נהדר!"
 else:
-    summary_text += "\n\n💙 יום רגיל וטוב"
-
+    summary_text += "💙 יום רגיל וטוב"
             
             await update.message.reply_text(summary_text, parse_mode='Markdown')
             
