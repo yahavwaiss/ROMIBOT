@@ -220,6 +220,123 @@ class GoogleSheetsManager:
             logger.error(f"שגיאה בהבאת מנהלים: {e}")
             return []
 
+    def get_data_by_timerange(self, worksheet_name: str, days_back: int = 7) -> List[Dict]:
+        """מחזיר נתונים מטווח זמן מסוים"""
+        try:
+            ws = self.spreadsheet.worksheet(worksheet_name)
+            all_records = ws.get_all_records()
+            
+            cutoff_date = datetime.now(TIMEZONE) - timedelta(days=days_back)
+            
+            filtered_data = []
+            for record in all_records:
+                try:
+                    # ניסיון לפרסם את התאריך
+                    timestamp_str = str(record.get('timestamp', ''))
+                    if timestamp_str:
+                        # תמיכה בפורמטים שונים
+                        for fmt in ['%Y-%m-%d %H:%M', '%Y-%m-%d %H:%M:%S', '%d/%m/%Y %H:%M']:
+                            try:
+                                record_date = datetime.strptime(timestamp_str, fmt)
+                                record_date = TIMEZONE.localize(record_date)
+                                break
+                            except:
+                                continue
+                        else:
+                            continue  # לא הצליח לפרסם
+                            
+                        if record_date >= cutoff_date:
+                            filtered_data.append(record)
+                except:
+                    continue
+                    
+            return filtered_data
+        except Exception as e:
+            logger.error(f"שגיאה בקריאת נתונים מ-{worksheet_name}: {e}")
+            return []
+
+    def get_daily_summary(self) -> Dict[str, Any]:
+        """מחזיר סיכום יומי"""
+        try:
+            today_data = {}
+            
+            # נתוני אוכל
+            food_data = self.get_data_by_timerange('Food', 1)
+            today_data['food'] = {
+                'total_meals': len(food_data),
+                'liquids_ml': sum([float(item.get('qty_value', 0) or 0) for item in food_data if item.get('qty_unit') == 'ml']),
+                'solids_count': len([item for item in food_data if item.get('category') == 'solid'])
+            }
+            
+            # נתוני שינה
+            sleep_data = self.get_data_by_timerange('Sleep', 1)
+            total_sleep_minutes = 0
+            for sleep in sleep_data:
+                duration = sleep.get('duration_min')
+                if duration and str(duration).isdigit():
+                    total_sleep_minutes += int(duration)
+            
+            today_data['sleep'] = {
+                'total_sessions': len(sleep_data),
+                'total_hours': round(total_sleep_minutes / 60, 1),
+                'total_minutes': total_sleep_minutes
+            }
+            
+            # נתוני התנהגות
+            behavior_data = self.get_data_by_timerange('Behavior', 1)
+            today_data['behavior'] = {
+                'total_events': len(behavior_data),
+                'cry_events': len([item for item in behavior_data if item.get('category') == 'בכי']),
+                'positive_events': len([item for item in behavior_data if any(word in str(item.get('description', '')).lower() for word in ['שמח', 'חיוך', 'משחק', 'טוב'])])
+            }
+            
+            return today_data
+        except Exception as e:
+            logger.error(f"שגיאה בסיכום יומי: {e}")
+            return {}
+
+    def get_weekly_summary(self) -> Dict[str, Any]:
+        """מחזיר סיכום שבועי"""
+        try:
+            weekly_data = {}
+            
+            # נתוני אוכל
+            food_data = self.get_data_by_timerange('Food', 7)
+            weekly_data['food'] = {
+                'total_meals': len(food_data),
+                'daily_average': round(len(food_data) / 7, 1),
+                'liquids_ml': sum([float(item.get('qty_value', 0) or 0) for item in food_data if item.get('qty_unit') == 'ml']),
+                'daily_liquids_avg': round(sum([float(item.get('qty_value', 0) or 0) for item in food_data if item.get('qty_unit') == 'ml']) / 7, 1)
+            }
+            
+            # נתוני שינה
+            sleep_data = self.get_data_by_timerange('Sleep', 7)
+            total_sleep_minutes = 0
+            for sleep in sleep_data:
+                duration = sleep.get('duration_min')
+                if duration and str(duration).isdigit():
+                    total_sleep_minutes += int(duration)
+            
+            weekly_data['sleep'] = {
+                'total_sessions': len(sleep_data),
+                'total_hours': round(total_sleep_minutes / 60, 1),
+                'daily_average_hours': round(total_sleep_minutes / 60 / 7, 1)
+            }
+            
+            # נתוני התנהגות
+            behavior_data = self.get_data_by_timerange('Behavior', 7)
+            weekly_data['behavior'] = {
+                'total_events': len(behavior_data),
+                'cry_events': len([item for item in behavior_data if item.get('category') == 'בכי']),
+                'positive_events': len([item for item in behavior_data if any(word in str(item.get('description', '')).lower() for word in ['שמח', 'חיוך', 'משחק', 'טוב'])]),
+                'daily_cry_avg': round(len([item for item in behavior_data if item.get('category') == 'בכי']) / 7, 1)
+            }
+            
+            return weekly_data
+        except Exception as e:
+            logger.error(f"שגיאה בסיכום שבועי: {e}")
+            return {}
+
     def save_food(self, user_name: str, parsed: ParsedMessage, original_text: str, chat_id: str):
         """שומר נתוני אוכל"""
         try:
@@ -356,7 +473,7 @@ class AIProcessor:
 - sleep: שינה, נמנום, זמני שינה
 - cry: בכי, צעקות
 - behavior: התנהגות, מצב רוח, פעילות
-- question: שאלות שמתחילות ב"איך", "מה", "מתי" וכו'
+- question: שאלות שמתחילות ב"איך", "מה", "מתי", "כמה" וכו'
 - other: כל דבר אחר
 
 אם יש טווח זמן (כמו 13:10-14:30), חלץ start_time ו end_time.
@@ -453,7 +570,7 @@ class RomiBot:
             'status': 'healthy',
             'bot': 'RomiBot',
             'timestamp': datetime.now(TIMEZONE).isoformat(),
-            'version': '1.0.2'
+            'version': '2.0.0'
         })
 
     async def home_page(self, request):
@@ -490,6 +607,11 @@ class RomiBot:
             border-radius: 20px;
             margin-top: 1rem;
         }
+        .features {
+            margin-top: 2rem;
+            text-align: right;
+            font-size: 1rem;
+        }
     </style>
 </head>
 <body>
@@ -497,7 +619,13 @@ class RomiBot:
         <h1>🍼 בוט תיעוד רומי</h1>
         <p>תיעוד חכם לתינוקות באמצעות AI</p>
         <div class="status">✅ השרת פעיל</div>
-        <p style="font-size: 1rem; margin-top: 1rem;">גרסה 1.0.2</p>
+        <div class="features">
+            <p>✨ <strong>חדש:</strong> תשובות חכמות וסיכומים אמיתיים!</p>
+            <p>📊 סיכומים יומיים ושבועיים</p>
+            <p>🤖 מענה לשאלות על בסיס הנתונים</p>
+            <p>🔍 ניתוח דפוסים והתפתחות</p>
+        </div>
+        <p style="font-size: 1rem; margin-top: 1rem;">גרסה 2.0.0</p>
     </div>
 </body>
 </html>
@@ -566,6 +694,92 @@ class RomiBot:
         """יוצר ID קצר לטקסט"""
         return hashlib.md5(text.encode()).hexdigest()[:8]
 
+    async def answer_question_with_data(self, question: str, user_name: str) -> str:
+        """עונה על שאלות בהתבסס על הנתונים בגיליון"""
+        try:
+            question_lower = question.lower()
+            
+            # שאלות על שינה
+            if any(word in question_lower for word in ['שינה', 'ישנה', 'נמנום']):
+                if any(word in question_lower for word in ['שבוע', 'השבוע']):
+                    weekly_data = self.sheets.get_weekly_summary()
+                    sleep_data = weekly_data.get('sleep', {})
+                    if sleep_data:
+                        return f"""📊 **סיכום שינה השבוע:**
+🕐 **סה"כ:** {sleep_data.get('total_hours', 0)} שעות
+📈 **ממוצע יומי:** {sleep_data.get('daily_average_hours', 0)} שעות
+💤 **מספר תנומות:** {sleep_data.get('total_sessions', 0)} פעמים"""
+                
+                elif any(word in question_lower for word in ['היום', 'הלילה']):
+                    daily_data = self.sheets.get_daily_summary()
+                    sleep_data = daily_data.get('sleep', {})
+                    if sleep_data:
+                        return f"""📊 **סיכום שינה היום:**
+🕐 **סה"כ:** {sleep_data.get('total_hours', 0)} שעות
+💤 **מספר תנומות:** {sleep_data.get('total_sessions', 0)} פעמים"""
+            
+            # שאלות על אוכל
+            elif any(word in question_lower for word in ['אוכל', 'אכל', 'שתה', 'בקבוק', 'תמל']):
+                if any(word in question_lower for word in ['שבוע', 'השבוע']):
+                    weekly_data = self.sheets.get_weekly_summary()
+                    food_data = weekly_data.get('food', {})
+                    if food_data:
+                        return f"""🍼 **סיכום אוכל השבוע:**
+🍽️ **סה"כ ארוחות:** {food_data.get('total_meals', 0)}
+📈 **ממוצע יומי:** {food_data.get('daily_average', 0)} ארוחות
+🥛 **סה"כ נוזלים:** {food_data.get('liquids_ml', 0)} מ"ל
+📊 **ממוצע נוזלים יומי:** {food_data.get('daily_liquids_avg', 0)} מ"ל"""
+                
+                elif any(word in question_lower for word in ['היום']):
+                    daily_data = self.sheets.get_daily_summary()
+                    food_data = daily_data.get('food', {})
+                    if food_data:
+                        return f"""🍼 **סיכום אוכל היום:**
+🍽️ **ארוחות:** {food_data.get('total_meals', 0)}
+🥛 **נוזלים:** {food_data.get('liquids_ml', 0)} מ"ל
+🥄 **מוצקים:** {food_data.get('solids_count', 0)} פעמים"""
+            
+            # שאלות על בכי/מצב רוח
+            elif any(word in question_lower for word in ['בכי', 'בוכה', 'מצב', 'רוח', 'התנהגות']):
+                if any(word in question_lower for word in ['שבוע', 'השבוע']):
+                    weekly_data = self.sheets.get_weekly_summary()
+                    behavior_data = weekly_data.get('behavior', {})
+                    if behavior_data:
+                        cry_avg = behavior_data.get('daily_cry_avg', 0)
+                        positive = behavior_data.get('positive_events', 0)
+                        return f"""😊 **סיכום התנהגות השבוע:**
+😢 **בכי:** {behavior_data.get('cry_events', 0)} פעמים (ממוצע {cry_avg} ליום)
+😊 **רגעים חיוביים:** {positive} פעמים
+📊 **סה"כ אירועים:** {behavior_data.get('total_events', 0)}"""
+                
+                elif any(word in question_lower for word in ['היום']):
+                    daily_data = self.sheets.get_daily_summary()
+                    behavior_data = daily_data.get('behavior', {})
+                    if behavior_data:
+                        return f"""😊 **סיכום התנהגות היום:**
+😢 **בכי:** {behavior_data.get('cry_events', 0)} פעמים
+😊 **רגעים חיוביים:** {behavior_data.get('positive_events', 0)} פעמים
+📊 **סה"כ אירועים:** {behavior_data.get('total_events', 0)}"""
+            
+            # שאלה כללית על המצב
+            elif any(word in question_lower for word in ['איך', 'מה', 'מצב', 'כללי']):
+                daily_data = self.sheets.get_daily_summary()
+                if daily_data:
+                    return f"""📊 **מצב כללי היום:**
+😴 **שינה:** {daily_data.get('sleep', {}).get('total_hours', 0)} שעות
+🍼 **אוכל:** {daily_data.get('food', {}).get('total_meals', 0)} ארוחות
+😊 **רגעים חיוביים:** {daily_data.get('behavior', {}).get('positive_events', 0)}
+😢 **בכי:** {daily_data.get('behavior', {}).get('cry_events', 0)} פעמים
+
+💡 **המצב נראה {'טוב' if daily_data.get('behavior', {}).get('positive_events', 0) > daily_data.get('behavior', {}).get('cry_events', 0) else 'סביר'}!**"""
+            
+            # אם לא הצליח לזהות
+            return "🤖 לא הצליח לזהות את השאלה. נסה לשאול:\n• כמה שעות ישנה השבוע?\n• כמה אכלה היום?\n• איך מצב הרוח שלה?\n• מה המצב הכללי?"
+            
+        except Exception as e:
+            logger.error(f"שגיאה בתשובה לשאלה: {e}")
+            return "❌ שגיאה בעיבוד השאלה. נסה שוב מאוחר יותר."
+
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """פקודת התחלה"""
         try:
@@ -584,7 +798,7 @@ class RomiBot:
             welcome_text = f"""
 👋 שלום {display_name}! ברוך/ה הבא/ה לבוט תיעוד רומי!
 
-🤖 הבוט מתעד באמצעות AI:
+🤖 **הבוט מתעד באמצעות AI:**
 🍼 **אוכל ושתייה** - כמות, סוג, שיטה
 😴 **שינה** - זמני התחלה וסיום
 😢 **בכי** - משך ועוצמה
@@ -596,6 +810,12 @@ class RomiBot:
 • שינה 13:10-14:30 נמנום יפה
 • בכי חזק 10 דקות אחרי רחצה
 • שמחה ומחייכת הרבה היום
+
+**🆕 דוגמאות לשאלות חכמות:**
+• כמה שעות ישנה השבוע?
+• כמה אכלה היום?
+• איך מצב הרוח שלה?
+• מה המצב הכללי?
 
 **פקודות שימושיות:**
 /today - סיכום היום
@@ -616,11 +836,87 @@ class RomiBot:
 
     async def cmd_today(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """סיכום היום"""
-        await update.message.reply_text("📅 סיכום היום בפיתוח...")
+        try:
+            daily_data = self.sheets.get_daily_summary()
+            
+            if not daily_data:
+                await update.message.reply_text("📅 אין נתונים להיום או שגיאה בקריאת הנתונים")
+                return
+            
+            sleep_data = daily_data.get('sleep', {})
+            food_data = daily_data.get('food', {})
+            behavior_data = daily_data.get('behavior', {})
+            
+            summary_text = f"""📅 **סיכום היום** {datetime.now(TIMEZONE).strftime('%d/%m/%Y')}
+
+😴 **שינה:**
+• {sleep_data.get('total_hours', 0)} שעות סה"כ
+• {sleep_data.get('total_sessions', 0)} תנומות
+
+🍼 **אוכל:**
+• {food_data.get('total_meals', 0)} ארוחות
+• {food_data.get('liquids_ml', 0)} מ"ל נוזלים
+• {food_data.get('solids_count', 0)} פעמים מוצקים
+
+😊 **התנהגות:**
+• {behavior_data.get('cry_events', 0)} פעמי בכי
+• {behavior_data.get('positive_events', 0)} רגעים חיוביים
+• {behavior_data.get('total_events', 0)} אירועים סה"כ
+
+{'🌟 יום נהדר!' if behavior_data.get('positive_events', 0) > behavior_data.get('cry_events', 0) else '💙 יום רגיל וטוב'}
+"""
+            
+            await update.message.reply_text(summary_text, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"שגיאה בסיכום יומי: {e}")
+            await update.message.reply_text("❌ שגיאה ביצירת סיכום יומי")
 
     async def cmd_week(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """סיכום השבוע"""
-        await update.message.reply_text("📈 סיכום שבועי בפיתוח...")
+        """סיכום השבוع"""
+        try:
+            weekly_data = self.sheets.get_weekly_summary()
+            
+            if not weekly_data:
+                await update.message.reply_text("📈 אין נתונים לשבוע או שגיאה בקריאת הנתונים")
+                return
+            
+            sleep_data = weekly_data.get('sleep', {})
+            food_data = weekly_data.get('food', {})
+            behavior_data = weekly_data.get('behavior', {})
+            
+            week_start = (datetime.now(TIMEZONE) - timedelta(days=7)).strftime('%d/%m')
+            week_end = datetime.now(TIMEZONE).strftime('%d/%m')
+            
+            summary_text = f"""📈 **סיכום השבוע** {week_start}-{week_end}
+
+😴 **שינה:**
+• {sleep_data.get('total_hours', 0)} שעות סה"כ
+• ממוצע {sleep_data.get('daily_average_hours', 0)} שעות ליום
+• {sleep_data.get('total_sessions', 0)} תנומות השבוع
+
+🍼 **אוכל:**
+• {food_data.get('total_meals', 0)} ארוחות סה"כ
+• ממוצע {food_data.get('daily_average', 0)} ארוחות ליום
+• {food_data.get('liquids_ml', 0)} מ"ל נוזלים סה"כ
+• ממוצע {food_data.get('daily_liquids_avg', 0)} מ"ל ליום
+
+😊 **התנהגות:**
+• {behavior_data.get('cry_events', 0)} פעמי בכי השבוע
+• ממוצע {behavior_data.get('daily_cry_avg', 0)} בכי ליום
+• {behavior_data.get('positive_events', 0)} רגעים חיוביים
+• {behavior_data.get('total_events', 0)} אירועים סה"כ
+
+{'🌟 שבוע מצוין!' if behavior_data.get('positive_events', 0) > behavior_data.get('cry_events', 0) else '💙 שבוע טוב במקרה הכולל'}
+
+📊 **מגמה:** {'השיפור נמשך!' if behavior_data.get('daily_cry_avg', 0) < 2 else 'יש עבודה קטנה'}
+"""
+            
+            await update.message.reply_text(summary_text, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"שגיאה בסיכום שבועי: {e}")
+            await update.message.reply_text("❌ שגיאה ביצירת סיכום שבועי")
 
     async def cmd_export(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """קישור לגיליון"""
@@ -752,16 +1048,19 @@ class RomiBot:
             await update.message.reply_text("❌ שגיאה בשמירת הנתונים")
 
     async def handle_question(self, update: Update, parsed: ParsedMessage, text: str, user_name: str):
-        """טיפול בשאלות"""
+        """טיפול בשאלות - עכשיו עם תשובות חכמות!"""
         try:
-            answer = "🤖 השאלה שלך נשמרה. בקרוב יהיה כאן מענה חכם על בסיס הנתונים המתועדים!"
-            await update.message.reply_text(answer)
+            # קבלת תשובה חכמה מבוססת נתונים
+            smart_answer = await self.answer_question_with_data(text, user_name)
+            await update.message.reply_text(smart_answer, parse_mode='Markdown')
 
             # שמירה בלוג
-            self.sheets.save_qa_log(user_name, text, answer, backed_by_data=False)
+            self.sheets.save_qa_log(user_name, text, smart_answer, backed_by_data=True)
         except Exception as e:
             logger.error(f"שגיאה בטיפול בשאלה: {e}")
-            await update.message.reply_text("❌ שגיאה בטיפול בשאלה")
+            fallback_answer = "🤖 השאלה שלך נשמרה. נסה שוב בעוד כמה דקות."
+            await update.message.reply_text(fallback_answer)
+            self.sheets.save_qa_log(user_name, text, fallback_answer, backed_by_data=False)
 
     async def ask_for_clarification(self, update: Update, parsed: ParsedMessage, text: str):
         """בקש הבהרה אם הביטחון נמוך"""
@@ -886,14 +1185,22 @@ class RomiBot:
             await query.edit_message_text("❌ שגיאה בשמירה")
 
     async def handle_question_from_callback(self, query, parsed: ParsedMessage, text: str, user_name: str):
-        """טיפול בשאלה מתוך callback"""
+        """טיפול בשאלה מתוך callback - עכשיו עם תשובה חכמה!"""
         try:
-            answer = "🤖 השאלה שלך נשמרה ותענה בקרוב!"
-            self.sheets.save_qa_log(user_name, text, answer, backed_by_data=False)
-            await query.edit_message_text(f"❓ **נרשם כשאלה** ✅\n📍 נשמר בגיליון Q&A_Log", parse_mode='Markdown')
+            # קבלת תשובה חכמה
+            smart_answer = await self.answer_question_with_data(text, user_name)
+            
+            # עדכון ההודעה עם התשובה
+            await query.edit_message_text(
+                f"❓ **נרשם כשאלה** ✅\n\n{smart_answer}", 
+                parse_mode='Markdown'
+            )
+            
+            # שמירה בלוג
+            self.sheets.save_qa_log(user_name, text, smart_answer, backed_by_data=True)
         except Exception as e:
             logger.error(f"שגיאה בטיפול בשאלה מcallback: {e}")
-            await query.edit_message_text("❌ שגיאה בשמירה")
+            await query.edit_message_text("❌ שגיאה בעיבוד השאלה")
 
     async def notify_admins(self, message: str):
         """שליחת התראה למנהלים"""
@@ -913,7 +1220,7 @@ class RomiBot:
 
     def run(self):
         """הפעלת השרת"""
-        logger.info("🤖 מפעיל את בוט תיעוד רומי (גרסת Webhook)...")
+        logger.info("🤖 מפעיל את בוט תיעוד רומי (גרסת Webhook) - גרסה 2.0.0")
 
         # הוספת lifecycle hooks
         self.web_app.on_startup.append(self.on_startup)
