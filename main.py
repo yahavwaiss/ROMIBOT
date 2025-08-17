@@ -1136,7 +1136,7 @@ class RomiBot:
                 if len(behavior_details) > 2:
                     summary_text += f" +{len(behavior_details)-2} נוספים"
             
-                        summary_text += f"\n\n{'🌟 יום נהדר!' if behavior_data.get('positive_events', 0) > behavior_data.get('cry_events', 0) else '💙 יום רגיל וטוב'}"
+                              summary_text += f"\n\n{'🌟 יום נהדר!' if behavior_data.get('positive_events', 0) > behavior_data.get('cry_events', 0) else '💙 יום רגיל וטוב'}"
             
             await update.message.reply_text(summary_text, parse_mode='Markdown')
             
@@ -1518,4 +1518,3 @@ if __name__ == '__main__':
         logger.error(f"שגיאה קריטית: {e}")
         print(f"❌ שגיאה קריטית: {e}")
         print("ודא שכל משתני הסביבה מוגדרים נכון")
-
