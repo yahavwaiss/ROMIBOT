@@ -729,7 +729,7 @@ class RomiBot:
             'status': 'healthy',
             'bot': 'RomiBot',
             'timestamp': datetime.now(TIMEZONE).isoformat(),
-            'version': '2.2.0'
+            'version': '2.2.1'
         })
 
     async def home_page(self, request):
@@ -779,13 +779,13 @@ class RomiBot:
         <p>תיעוד חכם לתינוקות באמצעות AI</p>
         <div class="status">✅ השרת פעיל</div>
         <div class="features">
-            <p>🆕 <strong>תיקון מהותי:</strong> קריאת נתוני שינה + פירוט מלא!</p>
+            <p>🆕 <strong>תיקון סופי:</strong> שגיאות syntax תוקנו!</p>
             <p>🔧 חישובי שעות שינה מדויקים 100%</p>
             <p>📋 סיכומים עם פירוט מלא - מה ומתי</p>
             <p>🤖 תשובות AI חכמות לשאלות</p>
             <p>🔍 ניתוח דפוסים והתפתחות</p>
         </div>
-        <p style="font-size: 1rem; margin-top: 1rem;">גרסה 2.2.0</p>
+        <p style="font-size: 1rem; margin-top: 1rem;">גרסה 2.2.1 - STABLE</p>
     </div>
 </body>
 </html>
@@ -1134,13 +1134,14 @@ class RomiBot:
             if behavior_details:
                 summary_text += f"\n📋 {', '.join(behavior_details[:2])}"
                 if len(behavior_details) > 2:
-           
                     summary_text += f" +{len(behavior_details)-2} נוספים"
-summary_text += "\n\n"
-if behavior_data.get('positive_events', 0) > behavior_data.get('cry_events', 0):
-    summary_text += "🌟 יום נהדר!"
-else:
-    summary_text += "💙 יום רגיל וטוב"
+            
+            # 🔧 תיקון סופי - הפרדת התנאי לשורות נפרדות
+            summary_text += "\n\n"
+            if behavior_data.get('positive_events', 0) > behavior_data.get('cry_events', 0):
+                summary_text += "🌟 יום נהדר!"
+            else:
+                summary_text += "💙 יום רגיל וטוב"
             
             await update.message.reply_text(summary_text, parse_mode='Markdown')
             
@@ -1181,12 +1182,20 @@ else:
 • {behavior_data.get('cry_events', 0)} פעמי בכי השבוע
 • ממוצע {behavior_data.get('daily_cry_avg', 0)} בכי ליום
 • {behavior_data.get('positive_events', 0)} רגעים חיוביים
-• {behavior_data.get('total_events', 0)} אירועים סה"כ
+• {behavior_data.get('total_events', 0)} אירועים סה"כ"""
 
-{'🌟 שבוע מצוין!' if behavior_data.get('positive_events', 0) > behavior_data.get('cry_events', 0) else '💙 שבוע טוב במקרה הכולל'}
+            # תיקון התנאי גם כאן
+            summary_text += "\n\n"
+            if behavior_data.get('positive_events', 0) > behavior_data.get('cry_events', 0):
+                summary_text += "🌟 שבוע מצוין!"
+            else:
+                summary_text += "💙 שבוע טוב במקרה הכולל"
 
-📊 **מגמה:** {'השיפור נמשך!' if behavior_data.get('daily_cry_avg', 0) < 2 else 'יש עבודה קטנה'}
-"""
+            summary_text += "\n\n📊 **מגמה:** "
+            if behavior_data.get('daily_cry_avg', 0) < 2:
+                summary_text += "השיפור נמשך!"
+            else:
+                summary_text += "יש עבודה קטנה"
             
             await update.message.reply_text(summary_text, parse_mode='Markdown')
             
@@ -1496,7 +1505,7 @@ else:
 
     def run(self):
         """הפעלת השרת"""
-        logger.info("🤖 מפעיל את בוט תיעוד רומי (גרסת Webhook) - גרסה 2.2.0")
+        logger.info("🤖 מפעיל את בוט תיעוד רומי (גרסת Webhook) - גרסה 2.2.1 STABLE")
 
         # הוספת lifecycle hooks
         self.web_app.on_startup.append(self.on_startup)
